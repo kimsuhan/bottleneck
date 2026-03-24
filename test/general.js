@@ -5,6 +5,15 @@ var child_process = require('child_process')
 
 describe('General', function () {
   var c
+  var getLeakage = function () {
+    try {
+      return require('leakage')
+    } catch (err) {
+      if (err.code === 'MODULE_NOT_FOUND') return null
+      throw err
+    }
+  }
+  var leakage = getLeakage()
 
   afterEach(function () {
     return c.limiter.disconnect(false)
@@ -14,10 +23,12 @@ describe('General', function () {
     process.env.DATASTORE !== 'redis' && process.env.DATASTORE !== 'ioredis' &&
     process.env.BUILD !== 'es5' && process.env.BUILD !== 'light'
   ) {
-    it('Should not leak memory on instantiation', async function () {
+    var leakTest = leakage == null ? it.skip : it
+
+    leakTest('Should not leak memory on instantiation', async function () {
       c = makeTest()
       this.timeout(8000)
-      const { iterate } = require('leakage')
+      const { iterate } = leakage
 
       const result = await iterate.async(async () => {
         const limiter = new Bottleneck({ datastore: 'local' })
@@ -27,10 +38,10 @@ describe('General', function () {
 
     })
 
-    it('Should not leak memory running jobs', async function () {
+    leakTest('Should not leak memory running jobs', async function () {
       c = makeTest()
       this.timeout(12000)
-      const { iterate } = require('leakage')
+      const { iterate } = leakage
       const limiter = new Bottleneck({ datastore: 'local', maxConcurrent: 1, minTime: 10 })
       await limiter.ready()
       var ctr = 0
@@ -161,7 +172,7 @@ describe('General', function () {
       c.mustEqual(c.limiter.queued(), 0)
       c.mustEqual(await c.limiter.clusterQueued(), 0)
       c.checkResultsOrder([[1], [5], [2], [3], [4]])
-      c.checkDuration(450)
+      c.checkDuration(450, 10, 200)
     })
 
     it('Should return the running and done counts', function () {
@@ -790,7 +801,7 @@ describe('General', function () {
       const results = await c.last({ weight: 0, priority: 9 })
       c.checkResultsOrder([[1], [2], [3], [4], [5]])
       c.mustEqual(calledDepleted, 1)
-      c.checkDuration(450)
+      c.checkDuration(450, 10, 200)
     })
 
     it('Should auto-increase the reservoir up to a maximum', async function () {

@@ -50,8 +50,8 @@ npm install --save bottleneck
 ```js
 import Bottleneck from "bottleneck";
 
-// Note: To support older browsers and Node <6.0, you must import the ES5 bundle instead.
-var Bottleneck = require("bottleneck/es5");
+// Bottleneck v2.19.5+ targets Node 22+.
+const Bottleneck = require("bottleneck");
 ```
 
 ## Quick Start
@@ -173,7 +173,7 @@ limiter.schedule(object.doSomething.bind(object));
 limiter.schedule(() => object.doSomething());
 ```
 
-* Bottleneck requires Node 6+ to function. However, an ES5 build is included: `var Bottleneck = require("bottleneck/es5");`.
+* Bottleneck requires Node 22+ to function.
 
 * Make sure you're catching `"error"` events emitted by your limiters!
 
@@ -772,7 +772,7 @@ Bottleneck will attempt to spread load evenly across limiters.
 
 First, add `redis` or `ioredis` to your application's dependencies:
 ```bash
-# NodeRedis (https://github.com/NodeRedis/node_redis)
+# node-redis (https://github.com/redis/node-redis)
 npm install --save redis
 
 # or ioredis (https://github.com/luin/ioredis)
@@ -783,19 +783,21 @@ Then create a limiter or a Group:
 const limiter = new Bottleneck({
   /* Some basic options */
   maxConcurrent: 5,
-  minTime: 500
-  id: "my-super-app" // All limiters with the same id will be clustered together
+  minTime: 500,
+  id: "my-super-app", // All limiters with the same id will be clustered together
 
   /* Clustering options */
   datastore: "redis", // or "ioredis"
   clearDatastore: false,
   clientOptions: {
-    host: "127.0.0.1",
-    port: 6379
+    socket: {
+      host: "127.0.0.1",
+      port: 6379
+    },
 
     // Redis client options
-    // Using NodeRedis? See https://github.com/NodeRedis/node_redis#options-object-properties
-    // Using ioredis? See https://github.com/luin/ioredis/blob/master/API.md#new-redisport-host-options
+    // Using node-redis? See https://github.com/redis/node-redis
+    // Using ioredis? See https://github.com/redis/ioredis
   }
 });
 ```
@@ -804,7 +806,7 @@ const limiter = new Bottleneck({
 |--------|---------|-------------|
 | `datastore` | `"local"` | Where the limiter stores its internal state. The default (`"local"`) keeps the state in the limiter itself. Set it to `"redis"` or `"ioredis"` to enable Clustering. |
 | `clearDatastore` | `false` | When set to `true`, on initial startup, the limiter will wipe any existing Bottleneck state data on the Redis db. |
-| `clientOptions` | `{}` | This object is passed directly to the redis client library you've selected. |
+| `clientOptions` | `{}` | This object is passed directly to the Redis client library you've selected. For `datastore: "redis"`, Bottleneck also accepts legacy top-level `host` / `port` client options and forwards them to `clientOptions.socket`. |
 | `clusterNodes` | `null` | **ioredis only.** When `clusterNodes` is not null, the client will be instantiated by calling `new Redis.Cluster(clusterNodes, clientOptions)` instead of `new Redis(clientOptions)`. |
 | `timeout` | `null` (no TTL) | The Redis TTL in milliseconds ([TTL](https://redis.io/commands/ttl)) for the keys created by the limiter. When `timeout` is set, the limiter's state will be automatically removed from Redis after `timeout` milliseconds of inactivity. |
 | `Redis` | `null` | Overrides the import/require of the redis/ioredis library. You shouldn't need to set this option unless your application is failing to start due to a failure to require/import the client library. |
@@ -896,28 +898,30 @@ limiter.publish(JSON.stringify({ hello: "world" }));
 
 #### clients()
 
-If you need direct access to the redis clients, use `.clients()`:
+If you need direct access to the Redis clients, use `.clients()`:
 ```js
 console.log(limiter.clients());
 // { client: <Redis Client>, subscriber: <Redis Client> }
 ```
+
+When `datastore: "redis"` is used, `.clients()` now returns modern node-redis client objects. If your application previously called callback-style raw client methods, migrate those call sites to the current Promise-based node-redis API.
 
 ### Additional Clustering information
 
 - Bottleneck is compatible with [Redis Clusters](https://redis.io/topics/cluster-tutorial), but you must use the `ioredis` datastore and the `clusterNodes` option.
 - Bottleneck is compatible with Redis Sentinel, but you must use the `ioredis` datastore.
 - Bottleneck's data is stored in Redis keys starting with `b_`. It also uses pubsub channels starting with `b_` It will not interfere with any other data stored on the server.
-- Bottleneck loads a few Lua scripts on the Redis server using the `SCRIPT LOAD` command. These scripts only take up a few Kb of memory. Running the `SCRIPT FLUSH` command will cause any connected limiters to experience critical errors until a new limiter connects to Redis and loads the scripts again.
+- Bottleneck loads a few Lua scripts on the Redis server using the `SCRIPT LOAD` command. These scripts only take up a few Kb of memory. Connected limiters will automatically reload missing scripts after `SCRIPT FLUSH` or a Redis restart.
 - The Lua scripts are highly optimized and designed to use as few resources as possible.
 
 ### Managing Redis Connections
 
-Bottleneck needs to create 2 Redis Clients to function, one for normal operations and one for pubsub subscriptions. These 2 clients are kept in a `Bottleneck.RedisConnection` (NodeRedis) or a `Bottleneck.IORedisConnection` (ioredis) object, referred to as the Connection object.
+Bottleneck needs to create 2 Redis clients to function, one for normal operations and one for pubsub subscriptions. These 2 clients are kept in a `Bottleneck.RedisConnection` (node-redis) or a `Bottleneck.IORedisConnection` (ioredis) object, referred to as the Connection object.
 
 By default, every Group and every standalone limiter (a limiter not created by a Group) will create their own Connection object, but it is possible to manually control this behavior. In this example, every Group and limiter is sharing the same Connection object and therefore the same 2 clients:
 ```js
 const connection = new Bottleneck.RedisConnection({
-  clientOptions: {/* NodeRedis/ioredis options */}
+  clientOptions: {/* node-redis/ioredis options */}
   // ioredis also accepts `clusterNodes` here
 });
 
@@ -933,10 +937,13 @@ When a Connection object is created manually, the connectivity `"error"` events 
 ```js
 connection.on("error", (err) => { /* handle connectivity errors here */ });
 ```
-If you already have a NodeRedis/ioredis client, you can ask Bottleneck to reuse it, although currently the Connection object will still create a second client for pubsub operations:
+If you already have a node-redis/ioredis client, you can ask Bottleneck to reuse it, although currently the Connection object will still create a second client for pubsub operations:
 ```js
 import Redis from "redis";
-const client = new Redis.createClient({/* options */});
+const client = Redis.createClient({
+  socket: { host: "127.0.0.1", port: 6379 }
+});
+await client.connect();
 
 const connection = new Bottleneck.RedisConnection({
   // `clientOptions` and `clusterNodes` will be ignored since we're passing a raw client
@@ -953,6 +960,7 @@ Use the `disconnect(flush)` method to close the Redis clients.
 limiter.disconnect();
 group.disconnect();
 ```
+With `datastore: "redis"`, `disconnect(true)` gracefully closes modern node-redis clients and `disconnect(false)` force-destroys them. If you're sharing a manually created Connection, calling `limiter.disconnect()` only detaches the limiter; it does not close the shared clients.
 If you created the Connection object manually, you need to call `connection.disconnect()` instead, for safety reasons.
 
 ## Debugging your application
@@ -981,7 +989,7 @@ limiter.schedule(fn)
 The internal algorithms essentially haven't changed from v1, but many small changes to the interface were made to introduce new features.
 
 All the breaking changes:
-- Bottleneck v2 requires Node 6+ or a modern browser. Use `require("bottleneck/es5")` if you need ES5 support in v2. Bottleneck v1 will continue to use ES5 only.
+- Bottleneck v2.19.5+ requires Node 22+.
 - The Bottleneck constructor now takes an options object. See [Constructor](#constructor).
 - The `Cluster` feature is now called `Group`. This is to distinguish it from the new v2 [Clustering](#clustering) feature.
 - The `Group` constructor takes an options object to match the limiter constructor.

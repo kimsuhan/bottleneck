@@ -71,16 +71,22 @@ class RedisDatastore
     else
       @connection.disconnect flush
 
+  normalizeError: (error) ->
+    return error unless error?.message?
+
+    normalized = error.message.match(/(SETTINGS_KEY_NOT_FOUND|UNKNOWN_CLIENT|OVERWEIGHT:[^ ]+)/)?[1]
+    if normalized?
+      error.message = normalized
+
+    error
+
   runScript: (name, args) ->
     await @ready unless name == "init" or name == "register_client"
-    new @Promise (resolve, reject) =>
-      all_args = [Date.now(), @clientId].concat args
-      @instance.Events.trigger "debug", "Calling Redis script: #{name}.lua", all_args
-      arr = @connection.__scriptArgs__ name, @originalId, all_args, (err, replies) ->
-        if err? then return reject err
-        return resolve replies
-      @connection.__scriptFn__(name) arr...
-    .catch (e) =>
+    all_args = [Date.now(), @clientId].concat args
+    @instance.Events.trigger "debug", "Calling Redis script: #{name}.lua", all_args
+    @connection.__runScript__(name, @originalId, all_args)
+    .catch (error) =>
+      e = @normalizeError error
       if e.message == "SETTINGS_KEY_NOT_FOUND"
         if name == "heartbeat" then @Promise.resolve()
         else
@@ -144,7 +150,8 @@ class RedisDatastore
         blocked: @convertBool(blocked),
         strategy
       }
-    catch e
+    catch error
+      e = @normalizeError error
       if e.message.indexOf("OVERWEIGHT") == 0
         [overweight, weight, maxConcurrent] = e.message.split ":"
         throw new BottleneckError("Impossible to add a job having a weight of #{weight} to a limiter having a maxConcurrent setting of #{maxConcurrent}")

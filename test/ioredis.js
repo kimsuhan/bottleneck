@@ -6,6 +6,12 @@ var Redis = require('ioredis')
 if (process.env.DATASTORE === 'ioredis') {
   describe('ioredis-only', function () {
     var c
+    var clusterNodes = function () {
+      return [{
+        host: process.env.REDIS_HOST,
+        port: process.env.REDIS_PORT
+      }]
+    }
 
     afterEach(function () {
       return c.limiter.disconnect(false)
@@ -16,10 +22,7 @@ if (process.env.DATASTORE === 'ioredis') {
         maxConcurrent: 2,
         Redis,
         clientOptions: {},
-        clusterNodes: [{
-          host: process.env.REDIS_HOST,
-          port: process.env.REDIS_PORT
-        }]
+        clusterNodes: clusterNodes()
       })
 
       c.mustEqual(c.limiter.datastore, 'ioredis')
@@ -29,10 +32,7 @@ if (process.env.DATASTORE === 'ioredis') {
       c = makeTest({
         maxConcurrent: 2,
         clientOptions: {},
-        clusterNodes: [{
-          host: process.env.REDIS_HOST,
-          port: process.env.REDIS_PORT
-        }]
+        clusterNodes: clusterNodes()
       })
 
       c.mustEqual(c.limiter.datastore, 'ioredis')
@@ -40,15 +40,12 @@ if (process.env.DATASTORE === 'ioredis') {
     })
 
     it('Should connect in Redis Cluster mode with premade client', function () {
-      var client = new Redis.Cluster('')
+      var client = new Redis.Cluster(clusterNodes())
       var connection = new Bottleneck.IORedisConnection({ client })
       c = makeTest({
         maxConcurrent: 2,
         clientOptions: {},
-        clusterNodes: [{
-          host: process.env.REDIS_HOST,
-          port: process.env.REDIS_PORT
-        }]
+        clusterNodes: clusterNodes()
       })
 
       c.mustEqual(c.limiter.datastore, 'ioredis')
