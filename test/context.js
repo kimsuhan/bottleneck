@@ -43,9 +43,18 @@ module.exports = function (options={}) {
       console.log('(CONTEXT) ERROR EVENT', err)
     })
   }
-  limiter.ready().then(function (client) {
+  var setup = limiter.ready().then(function (client) {
     start = Date.now()
+    return client
   })
+  setup.catch(function () {})
+  var disconnect = limiter.disconnect.bind(limiter)
+  limiter.disconnect = function (flush = true) {
+    return setup.catch(function () {})
+    .then(function () {
+      return disconnect(flush)
+    })
+  }
   var getResults = function () {
     return {
       elapsed: Date.now() - start,
@@ -118,6 +127,7 @@ module.exports = function (options={}) {
       })
     },
     limiter: limiter,
+    ready: setup,
     mustEqual: mustEqual,
     mustExist: function (a) { assert(a != null) },
     results: getResults,

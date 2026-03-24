@@ -6,11 +6,38 @@ var Redis = require('ioredis')
 if (process.env.DATASTORE === 'ioredis') {
   describe('ioredis-only', function () {
     var c
+    var clusterSupport = null
     var clusterNodes = function () {
       return [{
         host: process.env.REDIS_HOST,
         port: process.env.REDIS_PORT
       }]
+    }
+    var hasClusterSupport = function () {
+      if (clusterSupport != null) return clusterSupport
+
+      var client = new Redis({
+        host: process.env.REDIS_HOST,
+        port: process.env.REDIS_PORT
+      })
+
+      clusterSupport = client.call('cluster', 'info')
+        .then(function () {
+          return true
+        })
+        .catch(function (err) {
+          if (/cluster support disabled/i.test(err.message)) return false
+          throw err
+        })
+        .then(function (supported) {
+          client.disconnect()
+          return supported
+        }, function (err) {
+          client.disconnect()
+          throw err
+        })
+
+      return clusterSupport
     }
 
     afterEach(function () {
@@ -21,36 +48,40 @@ if (process.env.DATASTORE === 'ioredis') {
       c = makeTest({
         maxConcurrent: 2,
         Redis,
-        clientOptions: {},
-        clusterNodes: clusterNodes()
+        clientOptions: {}
       })
 
       c.mustEqual(c.limiter.datastore, 'ioredis')
     })
 
-    it('Should connect in Redis Cluster mode', function () {
+    it('Should connect in Redis Cluster mode', async function () {
+      if (!(await hasClusterSupport())) this.skip()
+
       c = makeTest({
         maxConcurrent: 2,
         clientOptions: {},
         clusterNodes: clusterNodes()
       })
 
+      await c.ready
       c.mustEqual(c.limiter.datastore, 'ioredis')
       assert(c.limiter._store.connection.client.nodes().length >= 0)
     })
 
-    it('Should connect in Redis Cluster mode with premade client', function () {
+    it('Should connect in Redis Cluster mode with premade client', async function () {
+      if (!(await hasClusterSupport())) this.skip()
+
       var client = new Redis.Cluster(clusterNodes())
       var connection = new Bottleneck.IORedisConnection({ client })
       c = makeTest({
         maxConcurrent: 2,
-        clientOptions: {},
-        clusterNodes: clusterNodes()
+        connection
       })
 
+      await c.ready
       c.mustEqual(c.limiter.datastore, 'ioredis')
       assert(c.limiter._store.connection.client.nodes().length >= 0)
-      connection.disconnect(false)
+      await connection.disconnect(false)
     })
 
     it('Should accept existing connections', function () {

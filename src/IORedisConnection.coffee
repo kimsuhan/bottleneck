@@ -17,6 +17,8 @@ class IORedisConnection
     @Redis ?= eval("require")("ioredis") # Obfuscated or else Webpack/Angular will try to inline the optional ioredis module. To override this behavior: pass the ioredis module to Bottleneck as the 'Redis' option.
     @Events ?= new Events @
     @terminated = false
+    @_startingUp = true
+    @_startupErrorMessage = null
 
     if @clusterNodes?
       @client = new @Redis.Cluster @clusterNodes, @clientOptions
@@ -37,22 +39,56 @@ class IORedisConnection
     .then =>
       client: @client
       subscriber: @subscriber
+    @ready = @ready.then(
+      (clients) =>
+        @_startingUp = false
+        clients
+      (error) =>
+        @_startingUp = false
+        throw error
+    )
 
   _setup: (client, sub) ->
     client.setMaxListeners 0
-    client.on "error", (e) => @Events.trigger "error", e
+    client.on "error", (e) => @_triggerError e
     if sub
       client.on "message", (channel, message) =>
         @limiters[channel]?._store.onMessage channel, message
 
-    new @Promise (resolve) =>
+    new @Promise (resolve, reject) =>
+      onReady = null
+      onFailure = null
+      cleanup = =>
+        client.removeListener "ready", onReady if onReady?
+        client.removeListener "error", onFailure if onFailure?
+        client.removeListener "close", onFailure if onFailure?
+        client.removeListener "end", onFailure if onFailure?
+      onReady = =>
+        cleanup()
+        resolve client
+      onFailure = (error=new Error("Connection is closed.")) =>
+        cleanup()
+        reject error
       if client.status == "ready"
         resolve client
       else
-        client.once "ready", => resolve client
+        client.once "ready", onReady
+        client.once "error", onFailure
+        client.once "close", onFailure
+        client.once "end", onFailure
 
   _callCommand: (client, cmd) ->
     client.call cmd...
+
+  _triggerError: (error) ->
+    return if @terminated
+
+    if @_startingUp
+      message = error?.message ? "#{error}"
+      return if message == @_startupErrorMessage
+      @_startupErrorMessage = message
+
+    @Events.trigger "error", error
 
   _loadScript: (name) ->
     payload = Scripts.payload name
@@ -85,8 +121,13 @@ class IORedisConnection
 
   __removeLimiter__: (instance) ->
     channels = await @Promise.all [instance.channel(), instance.channel_client()]
+    ready = await @ready.then((=> true), (=> false))
     for channel in channels
-      await @subscriber.unsubscribe channel unless @terminated
+      if ready and !@terminated
+        try
+          await @subscriber.unsubscribe channel
+        catch error
+          null
       delete @limiters[channel]
 
   __runScript__: (name, id, args) ->
@@ -95,11 +136,11 @@ class IORedisConnection
     sha = @shas[name] ? await @_loadScript name
 
     try
-      @_callCommand @client, ["EVALSHA", sha, keys.length].concat(keys, args)
+      await @_callCommand @client, ["EVALSHA", sha, keys.length].concat(keys, args)
     catch error
       if /NOSCRIPT/i.test(error.message)
         sha = await @_loadScript name
-        @_callCommand @client, ["EVALSHA", sha, keys.length].concat(keys, args)
+        await @_callCommand @client, ["EVALSHA", sha, keys.length].concat(keys, args)
       else
         throw error
 
@@ -108,6 +149,7 @@ class IORedisConnection
     @limiters = {}
     @terminated = true
 
+    await @ready.catch -> null
     await @Promise.all [@_disconnectClient(@client, flush), @_disconnectClient(@subscriber, flush)]
 
 module.exports = IORedisConnection

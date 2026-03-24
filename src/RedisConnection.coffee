@@ -16,6 +16,8 @@ class RedisConnection
     @Redis ?= eval("require")("redis") # Obfuscated or else Webpack/Angular will try to inline the optional redis module. To override this behavior: pass the redis module to Bottleneck as the 'Redis' option.
     @Events ?= new Events @
     @terminated = false
+    @_startingUp = true
+    @_startupErrorMessage = null
 
     @clientOptions = @_normalizeClientOptions @clientOptions
     @client ?= @Redis.createClient @clientOptions
@@ -29,6 +31,14 @@ class RedisConnection
     .then =>
       client: @client
       subscriber: @subscriber
+    @ready = @ready.then(
+      (clients) =>
+        @_startingUp = false
+        clients
+      (error) =>
+        @_startingUp = false
+        throw error
+    )
 
   _normalizeClientOptions: (clientOptions={}) ->
     return clientOptions if clientOptions.socket? or (!clientOptions.host? and !clientOptions.port? and !clientOptions.path?)
@@ -47,13 +57,26 @@ class RedisConnection
   _setup: (client) ->
     client.setMaxListeners 0
     new @Promise (resolve, reject) =>
-      client.on "error", (e) => @Events.trigger "error", e
-      onReady = => resolve client
+      client.on "error", (e) => @_triggerError e
+      onReady = null
+      onFailure = null
+      cleanup = =>
+        client.removeListener "ready", onReady if onReady?
+        client.removeListener "error", onFailure if onFailure?
+        client.removeListener "end", onFailure if onFailure?
+      onReady = =>
+        cleanup()
+        resolve client
+      onFailure = (error=new Error("Connection is closed.")) =>
+        cleanup()
+        reject error
       if client.isReady then return resolve client
       client.once "ready", onReady
+      client.once "error", onFailure
+      client.once "end", onFailure
       if client.isOpen then return
       client.connect().catch (error) =>
-        client.removeListener "ready", onReady
+        cleanup()
         reject error
 
   _commandArgs: (cmd) ->
@@ -63,6 +86,16 @@ class RedisConnection
 
   _callCommand: (client, cmd) ->
     client.sendCommand @_commandArgs cmd
+
+  _triggerError: (error) ->
+    return if @terminated
+
+    if @_startingUp
+      message = error?.message ? "#{error}"
+      return if message == @_startupErrorMessage
+      @_startupErrorMessage = message
+
+    @Events.trigger "error", error
 
   _loadScript: (name) ->
     payload = Scripts.payload name
@@ -75,12 +108,11 @@ class RedisConnection
 
   _disconnectClient: (client, flush) ->
     return @Promise.resolve() unless client?
-    return @Promise.resolve() unless client.isOpen
 
     try
       if flush
-        if typeof client.close == "function" then client.close()
-        else if typeof client.quit == "function" then client.quit()
+        if typeof client.close == "function" then @Promise.resolve client.close()
+        else if typeof client.quit == "function" then @Promise.resolve client.quit()
         else @Promise.resolve()
       else
         if typeof client.destroy == "function" then client.destroy()
@@ -103,8 +135,13 @@ class RedisConnection
 
   __removeLimiter__: (instance) ->
     channels = await @Promise.all [instance.channel(), instance.channel_client()]
+    ready = await @ready.then((=> true), (=> false))
     for channel in channels
-      await @subscriber.unsubscribe channel unless @terminated
+      if ready and !@terminated
+        try
+          await @subscriber.unsubscribe channel
+        catch error
+          null
       delete @limiters[channel]
 
   __runScript__: (name, id, args) ->
@@ -126,6 +163,7 @@ class RedisConnection
     @limiters = {}
     @terminated = true
 
+    await @ready.catch -> null
     await @Promise.all [@_disconnectClient(@client, flush), @_disconnectClient(@subscriber, flush)]
 
 module.exports = RedisConnection
