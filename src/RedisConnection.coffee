@@ -125,9 +125,11 @@ class RedisConnection
     ready = await @ready.then((=> true), (=> false))
     for channel in channels
       if ready and !@terminated
-        try await @subscriber.unsubscribe channel
+        try
+          await @subscriber.unsubscribe channel
+        catch error
+          null
       delete @limiters[channel]
-        catch error then null
 
   __runScript__: (name, id, args) ->
     await @ready
