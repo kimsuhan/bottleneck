@@ -21,12 +21,15 @@ class IORedisConnection
     @_startupErrorMessage = null
 
     if @clusterNodes?
+      @isCluster = true
       @client = new @Redis.Cluster @clusterNodes, @clientOptions
       @subscriber = new @Redis.Cluster @clusterNodes, @clientOptions
     else if @client? and !@client.duplicate?
+      @isCluster = true
       clusterOptions = @client.options?.redisOptions ? @client.options
       @subscriber = new @Redis.Cluster @client.startupNodes, clusterOptions
     else
+      @isCluster = false
       @client ?= new @Redis @clientOptions
       @subscriber = @client.duplicate()
 
@@ -53,7 +56,8 @@ class IORedisConnection
     client.on "error", (e) => @_triggerError e
     if sub
       client.on "message", (channel, message) =>
-        @limiters[channel]?._store.onMessage channel, message
+        for instance in @limiters[channel] ? []
+          instance?._store.onMessage channel, message
 
     new @Promise (resolve, reject) =>
       onReady = null
@@ -80,6 +84,14 @@ class IORedisConnection
   _callCommand: (client, cmd) ->
     client.call cmd...
 
+  _runClusterCommand: (client, cmd) ->
+    [name, args...] = cmd
+    method = name?.toLowerCase?()
+    if typeof client[method] == "function"
+      client[method] args...
+    else
+      @_callCommand client, cmd
+
   _triggerError: (error) ->
     return if @terminated
 
@@ -97,7 +109,21 @@ class IORedisConnection
       @shas[name] = sha
       sha
 
-  _loadScripts: -> @Promise.all(Scripts.names.map (name) => @_loadScript name)
+  _loadScripts: ->
+    if @isCluster
+      masters = @client.nodes "master"
+      @Promise.all Scripts.names.map (name) =>
+        payload = Scripts.payload name
+        @Promise.all masters.map (client) -> client.call "SCRIPT", "LOAD", payload
+        .then ([sha]) =>
+          @shas[name] = sha
+          sha
+    else
+      Scripts.names.forEach (name) =>
+        @client.defineCommand name, {
+          lua: Scripts.payload name
+        }
+      @Promise.resolve()
 
   _disconnectClient: (client, flush) ->
     return @Promise.resolve() unless client?
@@ -110,42 +136,54 @@ class IORedisConnection
 
   __runCommand__: (cmd) ->
     await @ready
-    @_callCommand @client, cmd
+    if @isCluster then @_runClusterCommand @client, cmd
+    else @_callCommand @client, cmd
 
   __addLimiter__: (instance) ->
     channels = await @Promise.all [instance.channel(), instance.channel_client()]
     for channel in channels
-      @limiters[channel] = instance
-      await @subscriber.subscribe channel
+      listeners = @limiters[channel] ?= []
+      first = listeners.length == 0
+      listeners.push instance unless listeners.indexOf(instance) >= 0
+      await @subscriber.subscribe channel if first
     instance
 
   __removeLimiter__: (instance) ->
     channels = await @Promise.all [instance.channel(), instance.channel_client()]
     ready = await @ready.then((=> true), (=> false))
     for channel in channels
-      if ready and !@terminated
+      listeners = (@limiters[channel] ? []).filter (listener) -> listener != instance
+      if listeners.length > 0 then @limiters[channel] = listeners
+      else delete @limiters[channel]
+      if listeners.length == 0 and ready and !@terminated
         try
           await @subscriber.unsubscribe channel
         catch error
           null
-      delete @limiters[channel]
 
   __runScript__: (name, id, args) ->
     await @ready
     keys = Scripts.keys name, id
-    sha = @shas[name] ? await @_loadScript name
-
-    try
-      await @_callCommand @client, ["EVALSHA", sha, keys.length].concat(keys, args)
-    catch error
-      if /NOSCRIPT/i.test(error.message)
-        sha = await @_loadScript name
-        await @_callCommand @client, ["EVALSHA", sha, keys.length].concat(keys, args)
-      else
-        throw error
+    if @isCluster
+      sha = @shas[name] ? await @_loadScript name
+      try
+        await @client.evalsha sha, keys.length, keys.concat(args)...
+      catch error
+        if /NOSCRIPT/i.test(error.message)
+          sha = await @_loadScript name
+          await @client.evalsha sha, keys.length, keys.concat(args)...
+        else
+          throw error
+    else
+      @client[name] [keys.length].concat(keys, args)...
 
   disconnect: (flush=true) ->
-    clearInterval(@limiters[k]._store.heartbeat) for k in Object.keys @limiters
+    seen = new Set()
+    for channel in Object.keys @limiters
+      for instance in @limiters[channel] ? []
+        continue unless instance? and !seen.has(instance)
+        seen.add instance
+        clearInterval instance._store.heartbeat
     @limiters = {}
     @terminated = true
 

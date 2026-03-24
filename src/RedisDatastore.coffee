@@ -107,6 +107,7 @@ class RedisDatastore
   prepareInitSettings: (clear) ->
     args = @prepareObject Object.assign({}, @storeOptions, {
       id: @originalId
+      channel: @instance.channel()
       version: @instance.version
       groupTimeout: @timeout
       @clientTimeout

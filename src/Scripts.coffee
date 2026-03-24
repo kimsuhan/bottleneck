@@ -9,53 +9,91 @@ headers =
   conditions_check: lua["conditions_check.lua"]
   get_time: lua["get_time.lua"]
 
+KEY_VERSION = "v3"
+KEY_PREFIX = "b_#{KEY_VERSION}"
+KEY_SUFFIXES = [
+  "settings"
+  "job_weights"
+  "job_expirations"
+  "job_clients"
+  "client_running"
+  "client_num_queued"
+  "client_last_registered"
+  "client_last_seen"
+]
+
+exports.keyVersion = -> KEY_VERSION
+
+exports.encodeId = (id) -> encodeURIComponent("#{id}")
+
+exports.decodeId = (id) -> decodeURIComponent("#{id}")
+
+exports.slotTag = (id) -> exports.encodeId id
+
+exports.baseKey = (id) -> "#{KEY_PREFIX}:{#{exports.slotTag(id)}}"
+
+exports.dataKey = (id, suffix) -> "#{exports.baseKey(id)}:#{suffix}"
+
+exports.settingsKey = (id) -> exports.dataKey(id, "settings")
+
+exports.settingsPattern = -> "#{KEY_PREFIX}:{*}:settings"
+
+exports.parseId = (key) ->
+  match = key.match /^b_v3:\{([^}]+)\}:settings$/
+  throw new Error "Invalid settings key: #{key}" unless match?
+  exports.decodeId match[1]
+
+exports.channel = (id) -> "#{exports.baseKey(id)}:channel"
+
+exports.channelClient = (id, clientId) -> "#{exports.channel(id)}:#{clientId}"
+
 exports.allKeys = (id) -> [
   ###
   HASH
   ###
-  "b_#{id}_settings"
+  exports.dataKey(id, "settings")
 
   ###
   HASH
   job index -> weight
   ###
-  "b_#{id}_job_weights"
+  exports.dataKey(id, "job_weights")
 
   ###
   ZSET
   job index -> expiration
   ###
-  "b_#{id}_job_expirations"
+  exports.dataKey(id, "job_expirations")
 
   ###
   HASH
   job index -> client
   ###
-  "b_#{id}_job_clients"
+  exports.dataKey(id, "job_clients")
 
   ###
   ZSET
   client -> sum running
   ###
-  "b_#{id}_client_running"
+  exports.dataKey(id, "client_running")
 
   ###
   HASH
   client -> num queued
   ###
-  "b_#{id}_client_num_queued"
+  exports.dataKey(id, "client_num_queued")
 
   ###
   ZSET
   client -> last job registered
   ###
-  "b_#{id}_client_last_registered"
+  exports.dataKey(id, "client_last_registered")
 
   ###
   ZSET
   client -> last seen
   ###
-  "b_#{id}_client_last_seen"
+  exports.dataKey(id, "client_last_seen")
 ]
 
 templates =

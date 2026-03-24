@@ -1,6 +1,7 @@
 global.TEST = true
 var Bottleneck = require('./bottleneck')
 var assert = require('assert')
+var testLimiterSequence = 0
 
 module.exports = function (options={}) {
   var mustEqual = function (a, b) {
@@ -24,6 +25,12 @@ module.exports = function (options={}) {
         port: process.env.REDIS_PORT,
       }
     }
+    if (options.datastore === 'ioredis' && process.env.REDIS_CLUSTER === '1' && options.clusterNodes == null) {
+      options.clusterNodes = [{
+        host: process.env.REDIS_HOST,
+        port: process.env.REDIS_PORT,
+      }]
+    }
   }
 
   if (options.datastore == null && process.env.DATASTORE === 'redis') {
@@ -34,6 +41,10 @@ module.exports = function (options={}) {
     setRedisClientOptions(options)
   } else {
     options.datastore = 'local'
+  }
+
+  if ((options.datastore === 'redis' || options.datastore === 'ioredis') && options.id == null) {
+    options.id = '<no-id>-' + process.pid + '-' + (++testLimiterSequence)
   }
 
   var limiter = new Bottleneck(options)

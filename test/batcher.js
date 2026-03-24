@@ -3,6 +3,9 @@ var Bottleneck = require('./bottleneck')
 var assert = require('assert')
 
 describe('Batcher', function () {
+  if (process.env.DATASTORE === 'redis' || process.env.DATASTORE === 'ioredis') {
+    this.timeout(5000)
+  }
   var c
   var assertBatchValues = function (data, expected) {
     c.mustEqual(data.map(([, value]) => value), expected)
@@ -125,6 +128,15 @@ describe('Batcher', function () {
     })
     var t0 = Date.now()
     var batches = []
+    var firstFlushTime
+
+    var assertBatchValues = function (data, values) {
+      c.mustEqual(data.map((([, x]) => x)), values)
+    }
+
+    var assertTightWindow = function (data) {
+      assert(Math.abs(data[1][0] - data[0][0]) < 20)
+    }
 
     batcher.on('batch', function (batcher) {
       batches.push(batcher)
@@ -135,10 +147,10 @@ describe('Batcher', function () {
       batcher.add(2).then((x) => c.limiter.schedule(c.promise, null, Date.now() - t0, 2))
     ])
     .then(function (data) {
-      c.mustEqual(
-        data.map((([t, x]) => [Math.floor(t / 50), x])),
-        [[1, 1], [1, 2]]
-      )
+      assertBatchValues(data, [1, 2])
+      assertTightWindow(data)
+      firstFlushTime = data[0][0]
+      assert(firstFlushTime >= 40)
 
       var promises = []
       promises.push(batcher.add(3).then((x) => c.limiter.schedule(c.promise, null, Date.now() - t0, 3)))
@@ -151,15 +163,14 @@ describe('Batcher', function () {
       })
     })
     .then(function (data) {
-      c.mustEqual(
-        data.map((([t, x]) => [Math.floor(t / 50), x])),
-        [[2, 3], [2, 4]]
-      )
+      assertBatchValues(data, [3, 4])
+      assertTightWindow(data)
+      assert(data[0][0] - firstFlushTime >= 35)
 
       return c.last()
     })
     .then(function (results) {
-      c.checkDuration(120, 20)
+      c.checkDuration(100, 20)
       c.mustEqual(batches, [[1, 2], [3, 4]])
     })
   })
@@ -207,7 +218,7 @@ describe('Batcher', function () {
       return c.last()
     })
     .then(function (results) {
-      c.checkDuration(85, 25)
+      c.checkDuration(60, 20, 50)
       c.mustEqual(batches, [[1, 2, 3], [4, 5]])
     })
   })

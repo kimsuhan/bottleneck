@@ -14,6 +14,7 @@ local settings = redis.call('hmget', settings_key,
   'minTime',
   'groupTimeout'
 )
+local channel = redis.call('hget', settings_key, 'channel')
 local id = settings[1]
 local maxConcurrent = tonumber(settings[2])
 local highWater = tonumber(settings[3])
@@ -62,7 +63,7 @@ if blocked then
   end
   redis.call('hmset', client_num_queued_key, unpack(queued_reset))
 
-  redis.call('publish', 'b_'..id, 'blocked:')
+  redis.call('publish', channel, 'blocked:')
 
   refresh_expiration(now, newNextRequest, groupTimeout)
 end

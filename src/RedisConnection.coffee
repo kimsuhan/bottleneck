@@ -87,6 +87,13 @@ class RedisConnection
   _callCommand: (client, cmd) ->
     client.sendCommand @_commandArgs cmd
 
+  _listenersFor: (channel) ->
+    @limiters[channel] ?= []
+
+  _dispatchMessage: (channel, message) ->
+    for instance in @limiters[channel] ? []
+      instance?._store.onMessage channel, message
+
   _triggerError: (error) ->
     return if @terminated
 
@@ -128,21 +135,26 @@ class RedisConnection
   __addLimiter__: (instance) ->
     channels = await @Promise.all [instance.channel(), instance.channel_client()]
     for channel in channels
-      @limiters[channel] = instance
-      await @subscriber.subscribe channel, (message) =>
-        @limiters[channel]?._store.onMessage channel, message
+      listeners = @_listenersFor channel
+      first = listeners.length == 0
+      listeners.push instance unless listeners.indexOf(instance) >= 0
+      if first
+        await @subscriber.subscribe channel, (message) =>
+          @_dispatchMessage channel, message
     instance
 
   __removeLimiter__: (instance) ->
     channels = await @Promise.all [instance.channel(), instance.channel_client()]
     ready = await @ready.then((=> true), (=> false))
     for channel in channels
-      if ready and !@terminated
+      listeners = @_listenersFor(channel).filter (listener) -> listener != instance
+      if listeners.length > 0 then @limiters[channel] = listeners
+      else delete @limiters[channel]
+      if listeners.length == 0 and ready and !@terminated
         try
           await @subscriber.unsubscribe channel
         catch error
           null
-      delete @limiters[channel]
 
   __runScript__: (name, id, args) ->
     await @ready
@@ -159,7 +171,12 @@ class RedisConnection
         throw error
 
   disconnect: (flush=true) ->
-    clearInterval(@limiters[k]._store.heartbeat) for k in Object.keys @limiters
+    seen = new Set()
+    for channel in Object.keys @limiters
+      for instance in @limiters[channel] ? []
+        continue unless instance? and !seen.has(instance)
+        seen.add instance
+        clearInterval instance._store.heartbeat
     @limiters = {}
     @terminated = true
 
