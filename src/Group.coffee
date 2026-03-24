@@ -74,6 +74,7 @@ class Group
     @_startAutoCleanup() if options.timeout?
 
   disconnect: (flush=true) ->
+    clearInterval @interval if @interval?
     if !@sharedConnection
       @connection?.disconnect flush
 

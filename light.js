@@ -951,6 +951,9 @@
 
 	    disconnect(flush = true) {
 	      var ref;
+	      if (this.interval != null) {
+	        clearInterval(this.interval);
+	      }
 	      if (!this.sharedConnection) {
 	        return (ref = this.connection) != null ? ref.disconnect(flush) : void 0;
 	      }

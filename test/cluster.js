@@ -30,9 +30,9 @@ if (process.env.DATASTORE === 'redis' || process.env.DATASTORE === 'ioredis') {
   }
   var runCommand = function (limiter, command, args) {
     var client = limiter._store.clients.client
-    var rawPromise = typeof client.sendCommand === 'function'
-      ? client.sendCommand(commandArgs(command, args))
-      : client.call(command, ...args)
+    var rawPromise = limiter.datastore === 'ioredis'
+      ? client.call(command, ...args)
+      : client.sendCommand(commandArgs(command, args))
 
     return rawPromise.then(function (data) {
       if (command === 'hgetall') return arrayToObject(data)
