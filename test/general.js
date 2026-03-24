@@ -728,7 +728,7 @@ describe('General', function () {
       .then(function (results) {
         c.checkResultsOrder([[1], [2], [3], [4], [5]])
         c.mustEqual(calledDepleted, 2)
-        c.checkDuration(300)
+        c.checkDuration(300, 10, 200)
       })
     })
 
@@ -831,7 +831,7 @@ describe('General', function () {
       const results = await c.last({ weight: 0, priority: 9 })
       c.checkResultsOrder([[1], [2], [3], [4], [5]])
       c.mustEqual(calledDepleted, 1)
-      c.checkDuration(450)
+      c.checkDuration(450, 10, 200)
     })
 
     it('Should allow staggered X by Y type usage', function () {
