@@ -1,0 +1,29 @@
+# Context Snapshot — execution of approved remaining test-failure remediation plan
+
+- task statement: Execute the approved plan to fix the remaining Redis/ioredis modernization test failures.
+- desired outcome: Green `npm test`, `DATASTORE=redis npm test`, and `DATASTORE=ioredis npm test` on the remediation branch, with fixes verified and documented.
+- known facts/evidence:
+  - Approved plan: `.omx/plans/prd-test-failure-remediation-2026-03-24.md`
+  - Approved test spec: `.omx/plans/test-spec-test-failure-remediation-2026-03-24.md`
+  - Current branch baseline is `team/node22-redis-modernization`.
+  - Failure buckets: harness/ownership noise, node-redis lifecycle race, ioredis parity gaps, timing-brittle tests.
+  - Exact phase-targeted verification commands are already defined in the plan/test spec.
+- constraints:
+  - Keep Bottleneck public clustering behavior stable where practical.
+  - Execute with Ralph-style persistence and Ultrawork-style parallelism inside team mode.
+  - Verify before claiming completion.
+  - Work in this dedicated clean execution worktree.
+- unknowns/open questions:
+  - Whether the remaining failures collapse significantly after Phase 0 harness cleanup.
+  - Whether timing regressions need logic changes or only test recalibration.
+- likely codebase touchpoints:
+  - `src/RedisConnection.coffee`
+  - `src/IORedisConnection.coffee`
+  - `src/RedisDatastore.coffee`
+  - `src/Group.coffee`
+  - `test/cluster.js`
+  - `test/context.js`
+  - `test/batcher.js`
+  - `test/general.js`
+  - `test/node_redis.js`
+  - `test/ioredis.js`
