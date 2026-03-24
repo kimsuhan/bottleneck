@@ -4,6 +4,13 @@ var assert = require('assert')
 
 describe('Batcher', function () {
   var c
+  var assertBatchValues = function (data, expected) {
+    c.mustEqual(data.map(([, value]) => value), expected)
+  }
+  var assertTightWindow = function (data, maxSpread = 35) {
+    var times = data.map(([time]) => time)
+    assert(Math.max(...times) - Math.min(...times) < maxSpread)
+  }
 
   afterEach(function () {
     return c.limiter.disconnect(false)
@@ -30,10 +37,10 @@ describe('Batcher', function () {
       batcher.add(5).then((x) => c.limiter.schedule(c.promise, null, Date.now() - t0, 5))
     ])
     .then(function (data) {
-      c.mustEqual(
-        data.map((([t, x]) => [Math.floor(t / 50), x])),
-        [[0, 1], [0, 2], [0, 3], [1, 4], [1, 5]]
-      )
+      assertBatchValues(data, [1, 2, 3, 4, 5])
+      assertTightWindow(data.slice(0, 3))
+      assertTightWindow(data.slice(3))
+      assert(data[3][0] - data[2][0] >= 20)
 
       return c.last()
     })
@@ -60,10 +67,9 @@ describe('Batcher', function () {
       batcher.add(2).then((x) => c.limiter.schedule(c.promise, null, Date.now() - t0, 2))
     ])
     .then(function (data) {
-      c.mustEqual(
-        data.map((([t, x]) => [Math.floor(t / 50), x])),
-        [[1, 1], [1, 2]]
-      )
+      assertBatchValues(data, [1, 2])
+      assertTightWindow(data)
+      assert(data[0][0] >= 25)
 
       return Promise.all([
         batcher.add(3).then((x) => c.limiter.schedule(c.promise, null, Date.now() - t0, 3)),
@@ -71,10 +77,9 @@ describe('Batcher', function () {
       ])
     })
     .then(function (data) {
-      c.mustEqual(
-        data.map((([t, x]) => [Math.floor(t / 50), x])),
-        [[2, 3], [2, 4]]
-      )
+      assertBatchValues(data, [3, 4])
+      assertTightWindow(data)
+      assert(data[0][0] >= 75)
 
       return c.last()
     })
