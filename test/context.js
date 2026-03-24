@@ -47,6 +47,7 @@ module.exports = function (options={}) {
     start = Date.now()
     return client
   })
+  setup.catch(function () {})
   var disconnect = limiter.disconnect.bind(limiter)
   limiter.disconnect = function (flush = true) {
     return setup.catch(function () {})

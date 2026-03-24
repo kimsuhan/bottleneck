@@ -58,12 +58,25 @@ class RedisConnection
     client.setMaxListeners 0
     new @Promise (resolve, reject) =>
       client.on "error", (e) => @_triggerError e
-      onReady = => resolve client
+      onReady = null
+      onFailure = null
+      cleanup = =>
+        client.removeListener "ready", onReady if onReady?
+        client.removeListener "error", onFailure if onFailure?
+        client.removeListener "end", onFailure if onFailure?
+      onReady = =>
+        cleanup()
+        resolve client
+      onFailure = (error=new Error("Connection is closed.")) =>
+        cleanup()
+        reject error
       if client.isReady then return resolve client
       client.once "ready", onReady
+      client.once "error", onFailure
+      client.once "end", onFailure
       if client.isOpen then return
       client.connect().catch (error) =>
-        client.removeListener "ready", onReady
+        cleanup()
         reject error
 
   _commandArgs: (cmd) ->
