@@ -1,0 +1,31 @@
+# Context Snapshot — team execution for approved Redis modernization plan
+
+- task statement: Execute the approved Node 22+ modernization plan for Bottleneck, prioritizing Redis connection modernization.
+- desired outcome: Working code and docs on the current branch, verified with tests/build, preserving Bottleneck public behavior as much as practical while modernizing Redis integration.
+- known facts/evidence:
+  - Plan: `.omx/plans/prd-node22-redis-modernization-2026-03-24.md`
+  - Test spec: `.omx/plans/test-spec-node22-redis-modernization-2026-03-24.md`
+  - Current package pins legacy `redis ^2.8.0` and `ioredis ^4.11.1`.
+  - `src/RedisConnection.coffee` is tightly coupled to legacy node_redis APIs.
+  - `test/cluster.js` relies on legacy callback-style raw client helpers.
+  - Runtime baseline decision: Node 22+.
+- constraints:
+  - Keep public Bottleneck clustering API stable where feasible.
+  - Prioritize Redis connection layer.
+  - Edit source in `src/` and rebuild generated outputs in `lib/`.
+  - No new dependencies unless needed.
+  - Final state must be verified.
+- unknowns/open questions:
+  - Exact modernization diff needed for node-redis current API compatibility.
+  - Whether build/tooling simplification will require additional doc or release-note changes.
+- likely codebase touchpoints:
+  - `package.json`
+  - `scripts/build.sh`
+  - `src/RedisConnection.coffee`
+  - `src/IORedisConnection.coffee`
+  - `src/RedisDatastore.coffee`
+  - `src/Group.coffee`
+  - `test/cluster.js`
+  - `test/node_redis.js`
+  - `test/ioredis.js`
+  - `README.md`
