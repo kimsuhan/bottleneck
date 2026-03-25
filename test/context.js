@@ -1,6 +1,7 @@
 global.TEST = true
 var Bottleneck = require('./bottleneck')
 var assert = require('assert')
+var testLimiterSequence = 0
 
 module.exports = function (options={}) {
   var mustEqual = function (a, b) {
@@ -24,6 +25,12 @@ module.exports = function (options={}) {
         port: process.env.REDIS_PORT,
       }
     }
+    if (options.datastore === 'ioredis' && process.env.REDIS_CLUSTER === '1' && options.clusterNodes == null) {
+      options.clusterNodes = [{
+        host: process.env.REDIS_HOST,
+        port: process.env.REDIS_PORT,
+      }]
+    }
   }
 
   if (options.datastore == null && process.env.DATASTORE === 'redis') {
@@ -36,6 +43,10 @@ module.exports = function (options={}) {
     options.datastore = 'local'
   }
 
+  if ((options.datastore === 'redis' || options.datastore === 'ioredis') && options.id == null) {
+    options.id = '<no-id>-' + process.pid + '-' + (++testLimiterSequence)
+  }
+
   var limiter = new Bottleneck(options)
   // limiter.on("debug", function (str, args) { console.log(`${Date.now()-start} ${str} ${JSON.stringify(args)}`) })
   if (!options.errorEventsExpected) {
@@ -43,9 +54,18 @@ module.exports = function (options={}) {
       console.log('(CONTEXT) ERROR EVENT', err)
     })
   }
-  limiter.ready().then(function (client) {
+  var setup = limiter.ready().then(function (client) {
     start = Date.now()
+    return client
   })
+  setup.catch(function () {})
+  var disconnect = limiter.disconnect.bind(limiter)
+  limiter.disconnect = function (flush = true) {
+    return setup.catch(function () {})
+    .then(function () {
+      return disconnect(flush)
+    })
+  }
   var getResults = function () {
     return {
       elapsed: Date.now() - start,
@@ -118,6 +138,7 @@ module.exports = function (options={}) {
       })
     },
     limiter: limiter,
+    ready: setup,
     mustEqual: mustEqual,
     mustExist: function (a) { assert(a != null) },
     results: getResults,

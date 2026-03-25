@@ -27,6 +27,7 @@ local process_tick = function (now, always_publish)
     'capacityPriorityCounter',
     'clientTimeout'
   )
+  local channel = redis.call('hget', settings_key, 'channel')
   local id = settings[1]
   local maxConcurrent = tonumber(settings[2])
   local running = tonumber(settings[3])
@@ -153,7 +154,7 @@ local process_tick = function (now, always_publish)
 
   if always_publish or (initial_capacity ~= nil and final_capacity == nil) then
     -- always_publish or was not unlimited, now unlimited
-    redis.call('publish', 'b_'..id, 'capacity:'..(final_capacity or ''))
+    redis.call('publish', channel, 'capacity:'..(final_capacity or ''))
 
   elseif initial_capacity ~= nil and final_capacity ~= nil and final_capacity > initial_capacity then
     -- capacity was increased
@@ -195,14 +196,14 @@ local process_tick = function (now, always_publish)
       end
 
       local next_client = lowest_concurrency_clients[position]
-      redis.call('publish', 'b_'..id,
+      redis.call('publish', channel,
         'capacity-priority:'..(final_capacity or '')..
         ':'..next_client..
         ':'..capacityPriorityCounter
       )
       redis.call('hincrby', settings_key, 'capacityPriorityCounter', '1')
     else
-      redis.call('publish', 'b_'..id, 'capacity:'..(final_capacity or ''))
+      redis.call('publish', channel, 'capacity:'..(final_capacity or ''))
     end
   end
 

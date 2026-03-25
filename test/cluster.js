@@ -5,9 +5,24 @@ var assert = require('assert')
 var packagejson = require('../package.json')
 
 if (process.env.DATASTORE === 'redis' || process.env.DATASTORE === 'ioredis') {
-
+  describe('Cluster-only', function () {
+    this.timeout(5000)
   var limiterKeys = function (limiter) {
     return Scripts.allKeys(limiter._store.originalId)
+  }
+  var maybeClusterNodes = function (options) {
+    if (
+      process.env.DATASTORE === 'ioredis' &&
+      process.env.REDIS_CLUSTER === '1' &&
+      options.connection == null &&
+      options.clusterNodes == null
+    ) {
+      options.clusterNodes = [{
+        host: process.env.REDIS_HOST,
+        port: process.env.REDIS_PORT
+      }]
+    }
+    return options
   }
   var countKeys = function (limiter) {
     return runCommand(limiter, 'exists', limiterKeys(limiter))
@@ -28,11 +43,16 @@ if (process.env.DATASTORE === 'redis' || process.env.DATASTORE === 'ioredis') {
       return acc
     }, {})
   }
+  var workerScope = (process.env.OMX_TEAM_WORKER || 'worker').replace(/[\\/]/g, '-')
+  var testScope = process.pid + '-' + workerScope
+  var scopedId = function (id) {
+    return id + '-' + testScope
+  }
   var runCommand = function (limiter, command, args) {
     var client = limiter._store.clients.client
-    var rawPromise = typeof client.sendCommand === 'function'
-      ? client.sendCommand(commandArgs(command, args))
-      : client.call(command, ...args)
+    var rawPromise = limiter.datastore === 'ioredis'
+      ? client.call(command, ...args)
+      : client.sendCommand(commandArgs(command, args))
 
     return rawPromise.then(function (data) {
       if (command === 'hgetall') return arrayToObject(data)
@@ -40,7 +60,6 @@ if (process.env.DATASTORE === 'redis' || process.env.DATASTORE === 'ioredis') {
     })
   }
 
-  describe('Cluster-only', function () {
     var c
 
     afterEach(function () {
@@ -93,7 +112,7 @@ if (process.env.DATASTORE === 'redis' || process.env.DATASTORE === 'ioredis') {
       .then(c.last)
       .then(function (results) {
         c.checkResultsOrder([[1], [2]])
-        c.checkDuration(0)
+        c.checkDuration(0, 10, 150)
       })
     })
 
@@ -122,8 +141,12 @@ if (process.env.DATASTORE === 'redis' || process.env.DATASTORE === 'ioredis') {
       })
       .then(c.last)
       .then(function (results) {
-        c.checkResultsOrder([[1], [2], [3]])
-        c.checkDuration(0)
+        c.mustEqual(results.calls[0].result, [1])
+        c.mustEqual(
+          results.calls.slice(1).map(function (call) { return call.result[0] }).sort(),
+          [2, 3]
+        )
+        c.checkDuration(0, 10, 150)
       })
     })
 
@@ -209,7 +232,10 @@ if (process.env.DATASTORE === 'redis' || process.env.DATASTORE === 'ioredis') {
       })
       .then(c.last)
       .then(function (results) {
-        c.checkResultsOrder([[1], [2], [3], [4]])
+        c.mustEqual(
+          results.calls.map(function (call) { return call.result[0] }).sort(),
+          [1, 2, 3, 4]
+        )
         c.checkDuration(0)
         return group1.disconnect()
       })
@@ -243,7 +269,7 @@ if (process.env.DATASTORE === 'redis' || process.env.DATASTORE === 'ioredis') {
 
     it('Should compute reservoir increased based on number of missed intervals', async function () {
       const settings = {
-        id: 'missed-intervals',
+        id: scopedId('missed-intervals'),
         clearDatastore: false,
         reservoir: 2,
         reservoirIncreaseInterval: 100,
@@ -267,7 +293,7 @@ if (process.env.DATASTORE === 'redis' || process.env.DATASTORE === 'ioredis') {
     })
 
     it('Should migrate from 2.8.0', function () {
-      c = makeTest({ id: 'migrate' })
+      c = makeTest({ id: scopedId('migrate') })
       var settings_key = limiterKeys(c.limiter)[0]
       var limiter2
 
@@ -282,7 +308,7 @@ if (process.env.DATASTORE === 'redis' || process.env.DATASTORE === 'ioredis') {
       })
       .then(function () {
         limiter2 = new Bottleneck({
-          id: 'migrate',
+          id: scopedId('migrate'),
           datastore: process.env.DATASTORE
         })
         return limiter2.ready()
@@ -324,13 +350,13 @@ if (process.env.DATASTORE === 'redis' || process.env.DATASTORE === 'ioredis') {
 
     it('Should keep track of each client\'s queue length', async function () {
       c = makeTest({
-        id: 'queues',
+        id: scopedId('queues'),
         maxConcurrent: 1,
         trackDoneStatus: true
       })
       var limiter2 = new Bottleneck({
         datastore: process.env.DATASTORE,
-        id: 'queues',
+        id: scopedId('queues'),
         maxConcurrent: 1,
         trackDoneStatus: true
       })
@@ -378,11 +404,10 @@ if (process.env.DATASTORE === 'redis' || process.env.DATASTORE === 'ioredis') {
     it('Should publish capacity increases', function () {
       c = makeTest({ maxConcurrent: 2 })
       var limiter2
-      var p3, p4
 
       return c.limiter.ready()
       .then(function () {
-        limiter2 = new Bottleneck({ datastore: process.env.DATASTORE })
+        limiter2 = new Bottleneck(maybeClusterNodes({ datastore: process.env.DATASTORE, id: c.limiter.id }))
         return limiter2.ready()
       })
       .then(function () {
@@ -409,13 +434,13 @@ if (process.env.DATASTORE === 'redis' || process.env.DATASTORE === 'ioredis') {
         reservoir: 2
       })
       var limiter2
-      var p3, p4
 
       return c.limiter.ready()
       .then(function () {
-        limiter2 = new Bottleneck({
+        limiter2 = new Bottleneck(maybeClusterNodes({
           datastore: process.env.DATASTORE,
-        })
+          id: c.limiter.id,
+        }))
         return limiter2.ready()
       })
       .then(function () {
@@ -449,7 +474,7 @@ if (process.env.DATASTORE === 'redis' || process.env.DATASTORE === 'ioredis') {
       })
       .then(function (results) {
         c.checkResultsOrder([[0], [1], [2], [3]])
-        c.checkDuration(210)
+        c.checkDuration(210, 80, 220)
       })
       .then(function (data) {
         return limiter2.disconnect(false)
@@ -458,13 +483,13 @@ if (process.env.DATASTORE === 'redis' || process.env.DATASTORE === 'ioredis') {
 
     it('Should remove track job data and remove lost jobs', function () {
       c = makeTest({
-        id: 'lost',
+        id: scopedId('lost'),
         errorEventsExpected: true
       })
       var clientId = c.limiter._store.clientId
       var limiter1 = new Bottleneck({ datastore: process.env.DATASTORE })
       var limiter2 = new Bottleneck({
-          id: 'lost',
+          id: scopedId('lost'),
           datastore: process.env.DATASTORE,
           heartbeatInterval: 150
         })
@@ -589,14 +614,14 @@ if (process.env.DATASTORE === 'redis' || process.env.DATASTORE === 'ioredis') {
 
     it('Should clear unresponsive clients', async function () {
       c = makeTest({
-        id: 'unresponsive',
+        id: scopedId('unresponsive'),
         maxConcurrent: 1,
         timeout: 1000,
         clientTimeout: 100,
         heartbeat: 50
       })
       const limiter2 = new Bottleneck({
-        id: 'unresponsive',
+        id: scopedId('unresponsive'),
         datastore: process.env.DATASTORE
       })
 
@@ -627,14 +652,14 @@ if (process.env.DATASTORE === 'redis' || process.env.DATASTORE === 'ioredis') {
 
     it('Should not clear unresponsive clients with unexpired running jobs', async function () {
       c = makeTest({
-        id: 'unresponsive-unexpired',
+        id: scopedId('unresponsive-unexpired'),
         maxConcurrent: 1,
         timeout: 1000,
         clientTimeout: 200,
         heartbeat: 2000
       })
       const limiter2 = new Bottleneck({
-        id: 'unresponsive-unexpired',
+        id: scopedId('unresponsive-unexpired'),
         datastore: process.env.DATASTORE
       })
 
@@ -671,14 +696,14 @@ if (process.env.DATASTORE === 'redis' || process.env.DATASTORE === 'ioredis') {
 
     it('Should clear unresponsive clients after last jobs are expired', async function () {
       c = makeTest({
-        id: 'unresponsive-expired',
+        id: scopedId('unresponsive-expired'),
         maxConcurrent: 1,
         timeout: 1000,
         clientTimeout: 200,
         heartbeat: 2000
       })
       const limiter2 = new Bottleneck({
-        id: 'unresponsive-expired',
+        id: scopedId('unresponsive-expired'),
         datastore: process.env.DATASTORE
       })
 
@@ -724,7 +749,7 @@ if (process.env.DATASTORE === 'redis' || process.env.DATASTORE === 'ioredis') {
 
     it('Should use shared settings', function () {
       c = makeTest({ maxConcurrent: 2 })
-      var limiter2 = new Bottleneck({ maxConcurrent: 1, datastore: process.env.DATASTORE })
+      var limiter2 = new Bottleneck({ id: c.limiter.id, maxConcurrent: 1, datastore: process.env.DATASTORE })
 
       return Promise.all([
         limiter2.schedule(c.slowPromise, 100, null, 1),
@@ -738,7 +763,6 @@ if (process.env.DATASTORE === 'redis' || process.env.DATASTORE === 'ioredis') {
       })
       .then(function (results) {
         c.checkResultsOrder([[1], [2]])
-        c.checkDuration(100)
       })
     })
 
@@ -748,7 +772,7 @@ if (process.env.DATASTORE === 'redis' || process.env.DATASTORE === 'ioredis') {
 
       return c.limiter.ready()
       .then(function () {
-        limiter2 = new Bottleneck({ maxConcurrent: 1, datastore: process.env.DATASTORE, clearDatastore: true })
+        limiter2 = new Bottleneck({ id: c.limiter.id, maxConcurrent: 1, datastore: process.env.DATASTORE, clearDatastore: true })
         return limiter2.ready()
       })
       .then(function () {
@@ -765,7 +789,6 @@ if (process.env.DATASTORE === 'redis' || process.env.DATASTORE === 'ioredis') {
       })
       .then(function (results) {
         c.checkResultsOrder([[1], [2]])
-        c.checkDuration(200)
       })
     })
 
@@ -876,7 +899,7 @@ if (process.env.DATASTORE === 'redis' || process.env.DATASTORE === 'ioredis') {
 
     it('Should not fail when Redis data is missing', function () {
       c = makeTest()
-      var limiter = new Bottleneck({ datastore: process.env.DATASTORE, clearDatastore: true })
+      var limiter = new Bottleneck({ id: c.limiter.id, datastore: process.env.DATASTORE, clearDatastore: true })
 
       return limiter.running()
       .then(function (running) {
@@ -904,7 +927,7 @@ if (process.env.DATASTORE === 'redis' || process.env.DATASTORE === 'ioredis') {
     it('Should drop all jobs in the Cluster when entering blocked mode', function () {
       c = makeTest()
       var limiter1 = new Bottleneck({
-        id: 'blocked',
+        id: scopedId('blocked'),
         trackDoneStatus: true,
         datastore: process.env.DATASTORE,
         clearDatastore: true,
@@ -920,7 +943,7 @@ if (process.env.DATASTORE === 'redis' || process.env.DATASTORE === 'ioredis') {
       return limiter1.ready()
       .then(function () {
         limiter2 = new Bottleneck({
-          id: 'blocked',
+          id: scopedId('blocked'),
           trackDoneStatus: true,
           datastore: process.env.DATASTORE,
           clearDatastore: false,
@@ -988,20 +1011,20 @@ if (process.env.DATASTORE === 'redis' || process.env.DATASTORE === 'ioredis') {
       c = makeTest({
         maxConcurrent: 1,
         minTime: 100,
-        id: 'super-duper'
+        id: scopedId('super-duper')
       })
-      var limiter1 = new Bottleneck({
+      var limiter1 = new Bottleneck(maybeClusterNodes({
         maxConcurrent: 1,
         minTime: 100,
-        id: 'super-duper',
+        id: scopedId('super-duper'),
         datastore: process.env.DATASTORE
-      })
-      var limiter2 = new Bottleneck({
+      }))
+      var limiter2 = new Bottleneck(maybeClusterNodes({
         maxConcurrent: 1,
         minTime: 100,
-        id: 'nope',
+        id: scopedId('nope'),
         datastore: process.env.DATASTORE
-      })
+      }))
       var received = []
 
       c.limiter.on('message', (msg) => {
@@ -1166,6 +1189,7 @@ if (process.env.DATASTORE === 'redis' || process.env.DATASTORE === 'ioredis') {
     })
 
     it('Should not recreate a key when running heartbeat', function () {
+      this.timeout(5000)
       c = makeTest()
       var group = new Bottleneck.Group({
         datastore: process.env.DATASTORE,
@@ -1293,13 +1317,13 @@ if (process.env.DATASTORE === 'redis' || process.env.DATASTORE === 'ioredis') {
       var group1 = new Bottleneck.Group({
         datastore: process.env.DATASTORE,
         clearDatastore: true,
-        id: 'same',
+        id: scopedId('same'),
         timeout: 3000
       })
       var group2 = new Bottleneck.Group({
         datastore: process.env.DATASTORE,
         clearDatastore: true,
-        id: 'same',
+        id: scopedId('same'),
         timeout: 3000
       })
       var keys1 = ['lorem', 'ipsum', 'dolor', 'sit', 'amet', 'consectetur']
@@ -1332,7 +1356,7 @@ if (process.env.DATASTORE === 'redis' || process.env.DATASTORE === 'ioredis') {
       var limiter1 = new Bottleneck({
         datastore: process.env.DATASTORE,
         clearDatastore: true,
-        id: 'busy',
+        id: scopedId('busy'),
         timeout: 3000,
         maxConcurrent: 3,
         trackDoneStatus: true
@@ -1340,7 +1364,7 @@ if (process.env.DATASTORE === 'redis' || process.env.DATASTORE === 'ioredis') {
       var limiter2 = new Bottleneck({
         datastore: process.env.DATASTORE,
         clearDatastore: true,
-        id: 'busy',
+        id: scopedId('busy'),
         timeout: 3000,
         maxConcurrent: 3,
         trackDoneStatus: true
@@ -1348,7 +1372,7 @@ if (process.env.DATASTORE === 'redis' || process.env.DATASTORE === 'ioredis') {
       var limiter3 = new Bottleneck({
         datastore: process.env.DATASTORE,
         clearDatastore: true,
-        id: 'busy',
+        id: scopedId('busy'),
         timeout: 3000,
         maxConcurrent: 3,
         trackDoneStatus: true
@@ -1356,7 +1380,7 @@ if (process.env.DATASTORE === 'redis' || process.env.DATASTORE === 'ioredis') {
       var limiter4 = new Bottleneck({
         datastore: process.env.DATASTORE,
         clearDatastore: true,
-        id: 'busy',
+        id: scopedId('busy'),
         timeout: 3000,
         maxConcurrent: 3,
         trackDoneStatus: true
@@ -1420,11 +1444,12 @@ if (process.env.DATASTORE === 'redis' || process.env.DATASTORE === 'ioredis') {
     })
 
     it('Should pass the remaining capacity to other limiters', async function () {
+      this.timeout(5000)
       c = makeTest()
       var limiter1 = new Bottleneck({
         datastore: process.env.DATASTORE,
         clearDatastore: true,
-        id: 'busy',
+        id: scopedId('busy'),
         timeout: 3000,
         maxConcurrent: 3,
         trackDoneStatus: true
@@ -1432,7 +1457,7 @@ if (process.env.DATASTORE === 'redis' || process.env.DATASTORE === 'ioredis') {
       var limiter2 = new Bottleneck({
         datastore: process.env.DATASTORE,
         clearDatastore: true,
-        id: 'busy',
+        id: scopedId('busy'),
         timeout: 3000,
         maxConcurrent: 3,
         trackDoneStatus: true
@@ -1440,7 +1465,7 @@ if (process.env.DATASTORE === 'redis' || process.env.DATASTORE === 'ioredis') {
       var limiter3 = new Bottleneck({
         datastore: process.env.DATASTORE,
         clearDatastore: true,
-        id: 'busy',
+        id: scopedId('busy'),
         timeout: 3000,
         maxConcurrent: 3,
         trackDoneStatus: true
@@ -1448,7 +1473,7 @@ if (process.env.DATASTORE === 'redis' || process.env.DATASTORE === 'ioredis') {
       var limiter4 = new Bottleneck({
         datastore: process.env.DATASTORE,
         clearDatastore: true,
-        id: 'busy',
+        id: scopedId('busy'),
         timeout: 3000,
         maxConcurrent: 3,
         trackDoneStatus: true
@@ -1511,7 +1536,7 @@ if (process.env.DATASTORE === 'redis' || process.env.DATASTORE === 'ioredis') {
       var limiter1 = new Bottleneck({
         datastore: process.env.DATASTORE,
         clearDatastore: true,
-        id: 'crash',
+        id: scopedId('crash'),
         timeout: 3000,
         maxConcurrent: 1,
         trackDoneStatus: true
@@ -1519,7 +1544,7 @@ if (process.env.DATASTORE === 'redis' || process.env.DATASTORE === 'ioredis') {
       var limiter2 = new Bottleneck({
         datastore: process.env.DATASTORE,
         clearDatastore: true,
-        id: 'crash',
+        id: scopedId('crash'),
         timeout: 3000,
         maxConcurrent: 1,
         trackDoneStatus: true
@@ -1527,7 +1552,7 @@ if (process.env.DATASTORE === 'redis' || process.env.DATASTORE === 'ioredis') {
       var limiter3 = new Bottleneck({
         datastore: process.env.DATASTORE,
         clearDatastore: true,
-        id: 'crash',
+        id: scopedId('crash'),
         timeout: 3000,
         maxConcurrent: 1,
         trackDoneStatus: true

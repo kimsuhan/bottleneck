@@ -3,6 +3,7 @@ var Bottleneck = require('./bottleneck')
 var assert = require('assert')
 
 describe('Group', function () {
+  this.timeout(5000)
   var c
 
   afterEach(function () {

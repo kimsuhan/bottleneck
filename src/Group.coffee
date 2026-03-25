@@ -51,12 +51,16 @@ class Group
     if !@connection? then return @Promise.resolve @keys()
     keys = []
     cursor = null
-    start = "b_#{@id}-".length
-    end = "_settings".length
     until cursor == 0
-      [next, found] = await @connection.__runCommand__ ["scan", (cursor ? 0), "match", "b_#{@id}-*_settings", "count", 10000]
+      [next, found] = await @connection.__runCommand__ ["scan", (cursor ? 0), "match", Scripts.settingsPattern(), "count", 10000]
       cursor = ~~next
-      keys.push(k.slice(start, -end)) for k in found
+      for k in found
+        try
+          logicalId = Scripts.parseId k
+          prefix = "#{@id}-"
+          keys.push logicalId.slice(prefix.length) if logicalId.indexOf(prefix) == 0
+        catch error
+          null
     keys
 
   _startAutoCleanup: ->
@@ -74,6 +78,7 @@ class Group
     @_startAutoCleanup() if options.timeout?
 
   disconnect: (flush=true) ->
+    clearInterval @interval if @interval?
     if !@sharedConnection
       @connection?.disconnect flush
 

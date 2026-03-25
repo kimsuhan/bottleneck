@@ -897,20 +897,25 @@
 	    }
 
 	    async clusterKeys() {
-	      var cursor, end, found, i, k, keys, len, next, start;
+	      var cursor, found, i, k, keys, len, logicalId, next, prefix;
 	      if (this.connection == null) {
 	        return this.Promise.resolve(this.keys());
 	      }
 	      keys = [];
 	      cursor = null;
-	      start = `b_${this.id}-`.length;
-	      end = "_settings".length;
 	      while (cursor !== 0) {
-	        [next, found] = (await this.connection.__runCommand__(["scan", cursor != null ? cursor : 0, "match", `b_${this.id}-*_settings`, "count", 10000]));
+	        [next, found] = (await this.connection.__runCommand__(["scan", cursor != null ? cursor : 0, "match", Scripts$1.settingsPattern(), "count", 10000]));
 	        cursor = ~~next;
 	        for (i = 0, len = found.length; i < len; i++) {
 	          k = found[i];
-	          keys.push(k.slice(start, -end));
+	          try {
+	            logicalId = Scripts$1.parseId(k);
+	            prefix = `${this.id}-`;
+	            if (logicalId.indexOf(prefix) === 0) {
+	              keys.push(logicalId.slice(prefix.length));
+	            }
+	          } catch (error1) {
+	          }
 	        }
 	      }
 	      return keys;
@@ -932,8 +937,8 @@
 	            } else {
 	              results.push(void 0);
 	            }
-	          } catch (error) {
-	            e = error;
+	          } catch (error1) {
+	            e = error1;
 	            results.push(v.Events.trigger("error", e));
 	          }
 	        }
@@ -951,6 +956,9 @@
 
 	    disconnect(flush = true) {
 	      var ref;
+	      if (this.interval != null) {
+	        clearInterval(this.interval);
+	      }
 	      if (!this.sharedConnection) {
 	        return (ref = this.connection) != null ? ref.disconnect(flush) : void 0;
 	      }
@@ -1031,9 +1039,9 @@
 
 	var require$$4$1 = () => console.log('You must import the full version of Bottleneck in order to use this feature.');
 
-	var require$$8 = getCjsExportFromNamespace(version$2);
+	var require$$9 = getCjsExportFromNamespace(version$2);
 
-	var Bottleneck, DEFAULT_PRIORITY$1, Events$4, Job$1, LocalDatastore$1, NUM_PRIORITIES$1, Queues$1, RedisDatastore$1, States$1, Sync$1, parser$5,
+	var Bottleneck, DEFAULT_PRIORITY$1, Events$4, Job$1, LocalDatastore$1, NUM_PRIORITIES$1, Queues$1, RedisDatastore$1, Scripts$2, States$1, Sync$1, parser$5,
 	  splice = [].splice;
 
 	NUM_PRIORITIES$1 = 10;
@@ -1055,6 +1063,8 @@
 	States$1 = States_1;
 
 	Sync$1 = Sync_1;
+
+	Scripts$2 = require$$4;
 
 	Bottleneck = (function() {
 	  class Bottleneck {
@@ -1107,11 +1117,11 @@
 	    }
 
 	    channel() {
-	      return `b_${this.id}`;
+	      return Scripts$2.channel(this.id);
 	    }
 
 	    channel_client() {
-	      return `b_${this.id}_${this._store.clientId}`;
+	      return Scripts$2.channelClient(this.id, this._store.clientId);
 	    }
 
 	    publish(message) {
@@ -1438,7 +1448,7 @@
 
 	  Bottleneck.Events = Events$4;
 
-	  Bottleneck.version = Bottleneck.prototype.version = require$$8.version;
+	  Bottleneck.version = Bottleneck.prototype.version = require$$9.version;
 
 	  Bottleneck.strategy = Bottleneck.prototype.strategy = {
 	    LEAK: 1,

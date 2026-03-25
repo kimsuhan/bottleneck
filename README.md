@@ -847,6 +847,8 @@ It is **strongly recommended** that you give an `id` to every limiter and Group 
 
 It is **strongly recommended** that you set an `expiration` (See [Job Options](#job-options)) *on every job*, since that lets the cluster recover from crashed or disconnected clients. Otherwise, a client crashing while executing a job would not be able to tell the cluster to decrease its number of "running" jobs. By using expirations, those lost jobs are automatically cleared after the specified time has passed. Using expirations is essential to keeping a cluster reliable in the face of unpredictable application bugs, network hiccups, and so on.
 
+Roll out the versioned cluster namespace as one deployment unit: old and new limiters do not share keys or pubsub channels, so mixed versions against the same Redis DB/id behave like separate clusters. Use a fresh Redis DB, `clearDatastore: true`, or distinct ids until every instance is upgraded.
+
 Network latency between Node.js and Redis is not taken into account when calculating timings (such as `minTime`). To minimize the impact of latency, Bottleneck only performs a single Redis call per [lifecycle transition](#jobs-lifecycle). Keeping the Redis server close to your limiters will help you get a more consistent experience. Keeping the system time consistent across all clients will also help.
 
 It is **strongly recommended** to [set up an `"error"` listener](#events) on all your limiters and on your Groups.
@@ -910,7 +912,7 @@ When `datastore: "redis"` is used, `.clients()` now returns modern node-redis cl
 
 - Bottleneck is compatible with [Redis Clusters](https://redis.io/topics/cluster-tutorial), but you must use the `ioredis` datastore and the `clusterNodes` option.
 - Bottleneck is compatible with Redis Sentinel, but you must use the `ioredis` datastore.
-- Bottleneck's data is stored in Redis keys starting with `b_`. It also uses pubsub channels starting with `b_` It will not interfere with any other data stored on the server.
+- Bottleneck stores clustering state in a versioned, slot-tagged namespace (`b_v3:{<encoded-id>}:...`). All keys and pubsub channels for one logical limiter share the same Redis Cluster hash slot, and the pubsub channel uses the same tag (`...:channel[:clientId]`).
 - Bottleneck loads a few Lua scripts on the Redis server using the `SCRIPT LOAD` command. These scripts only take up a few Kb of memory. Connected limiters will automatically reload missing scripts after `SCRIPT FLUSH` or a Redis restart.
 - The Lua scripts are highly optimized and designed to use as few resources as possible.
 

@@ -9,6 +9,7 @@ RedisDatastore = require "./RedisDatastore"
 Events = require "./Events"
 States = require "./States"
 Sync = require "./Sync"
+Scripts = require "./Scripts"
 
 class Bottleneck
   Bottleneck.default = Bottleneck
@@ -95,9 +96,9 @@ class Bottleneck
 
   clients: -> @_store.clients
 
-  channel: -> "b_#{@id}"
+  channel: -> Scripts.channel @id
 
-  channel_client: -> "b_#{@id}_#{@_store.clientId}"
+  channel_client: -> Scripts.channelClient @id, @_store.clientId
 
   publish: (message) -> @_store.__publish__ message
 

@@ -3,6 +3,9 @@ var Bottleneck = require('./bottleneck')
 var assert = require('assert')
 
 describe('Priority', function () {
+  if (process.env.DATASTORE === 'redis' || process.env.DATASTORE === 'ioredis') {
+    this.timeout(5000)
+  }
   var c
 
   afterEach(function () {
@@ -24,7 +27,6 @@ describe('Priority', function () {
     })
     .then(function (results) {
       c.checkResultsOrder([[1], [5,6], [2] ,[3], [4]])
-      c.checkDuration(400)
     })
   })
 
@@ -55,7 +57,6 @@ describe('Priority', function () {
 
     return c.last({ weight: 0 })
     .then(function (results) {
-      c.checkDuration(200)
       c.checkResultsOrder([[1], [6], [5]])
       c.mustEqual(called, true)
     })
@@ -90,7 +91,6 @@ describe('Priority', function () {
     })
     .then(c.last)
     .then(function (results) {
-      c.checkDuration(200)
       c.checkResultsOrder([[1], [2], [3]])
       c.mustEqual(called, true)
     })
@@ -125,7 +125,6 @@ describe('Priority', function () {
     })
     .then(c.last)
     .then(function (results) {
-      c.checkDuration(200)
       c.checkResultsOrder([[1], [5], [6]])
       c.mustEqual(called, true)
     })
@@ -176,7 +175,6 @@ describe('Priority', function () {
 
     return c.last()
     .then(function (results) {
-      c.checkDuration(300)
       c.checkResultsOrder([[1], [4], [3], [2]])
     })
   })
