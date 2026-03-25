@@ -6,6 +6,14 @@ var Redis = require('redis')
 if (process.env.DATASTORE === 'redis') {
   describe('node_redis-only', function () {
     var c
+    var makeClientOptions = function () {
+      return {
+        socket: {
+          host: process.env.REDIS_HOST,
+          port: process.env.REDIS_PORT
+        }
+      }
+    }
 
     afterEach(function () {
       return c.limiter.disconnect(false)
@@ -43,14 +51,15 @@ if (process.env.DATASTORE === 'redis') {
         })
         .then(function () {
         // Shared connections should not be disconnected by the limiter
-          c.mustEqual(c.limiter.clients().client.ready, true)
+          c.mustEqual(c.limiter.clients().client.isReady, true)
           return connection.disconnect()
         })
     })
 
-    it('Should accept existing redis clients', function () {
-      var client = Redis.createClient()
+    it('Should accept existing redis clients', async function () {
+      var client = Redis.createClient(makeClientOptions())
       client.id = 'super-client'
+      await client.connect()
 
       var connection = new Bottleneck.RedisConnection({ client })
       connection.id = 'super-connection'
@@ -74,7 +83,7 @@ if (process.env.DATASTORE === 'redis') {
         })
         .then(function () {
         // Shared connections should not be disconnected by the limiter
-          c.mustEqual(c.limiter.clients().client.ready, true)
+          c.mustEqual(c.limiter.clients().client.isReady, true)
           return connection.disconnect()
         })
     })

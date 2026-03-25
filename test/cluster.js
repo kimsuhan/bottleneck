@@ -15,12 +15,28 @@ if (process.env.DATASTORE === 'redis' || process.env.DATASTORE === 'ioredis') {
   var deleteKeys = function (limiter) {
     return runCommand(limiter, 'del', limiterKeys(limiter))
   }
+  var commandArgs = function (command, args) {
+    return [command.toUpperCase()].concat(args.map(function (arg) {
+      return typeof arg === 'string' ? arg : `${arg}`
+    }))
+  }
+  var arrayToObject = function (entries) {
+    if (!Array.isArray(entries)) return entries
+
+    return entries.reduce(function (acc, value, index) {
+      if (index % 2 === 0) acc[value] = entries[index + 1]
+      return acc
+    }, {})
+  }
   var runCommand = function (limiter, command, args) {
-    return new Promise(function (resolve, reject) {
-      limiter._store.clients.client[command](...args, function (err, data) {
-        if (err != null) return reject(err)
-        return resolve(data)
-      })
+    var client = limiter._store.clients.client
+    var rawPromise = typeof client.sendCommand === 'function'
+      ? client.sendCommand(commandArgs(command, args))
+      : client.call(command, ...args)
+
+    return rawPromise.then(function (data) {
+      if (command === 'hgetall') return arrayToObject(data)
+      return data
     })
   }
 

@@ -1,6 +1,6 @@
 language: node_js
 node_js:
-  - 8
+  - 22
 branches:
   only:
   - master
@@ -19,7 +19,3 @@ install:
 sudo: required
 after_success: npx codecov --file=./coverage/lcov.info
 script: npm run test-all
-
-before_install:
-  - npm i -g npm@5.10
-  - npm --version

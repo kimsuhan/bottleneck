@@ -127,10 +127,10 @@ module.exports = function (options={}) {
         mustEqual(order[i], calls[i].result)
       }
     },
-    checkDuration: function (shouldBe, minBound = 10) {
+    checkDuration: function (shouldBe, minBound = 10, maxBound = 50) {
       var results = getResults()
       var min = shouldBe - minBound
-      var max = shouldBe + 50
+      var max = shouldBe + maxBound
       if (!(results.callsDuration > min && results.callsDuration < max)) {
         console.error('Duration not around ' + shouldBe + '. Was ' + results.callsDuration)
       }
